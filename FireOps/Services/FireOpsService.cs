@@ -1,16 +1,16 @@
-using System.Text.Json;
-using FireOps.Mvp.Data;
-using FireOps.Mvp.Domain;
-using FireOps.Mvp.ViewModels;
+﻿using System.Text.Json;
+using FireOps.Data;
+using FireOps.Domain;
+using FireOps.ViewModels;
 using Microsoft.EntityFrameworkCore;
 
-namespace FireOps.Mvp.Services;
+namespace FireOps.Services;
 
 public sealed class FireOpsService(
     IDbContextFactory<FireOpsDbContext> dbFactory,
     ChangeNotifier notifier)
 {
-    // Für den MVP repräsentiert diese ID das aktuell verwendete lokale Gerät.
+    // FÃ¼r den MVP reprÃ¤sentiert diese ID das aktuell verwendete lokale GerÃ¤t.
     private static readonly Guid DeviceId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
     public async Task<IReadOnlyList<IncidentListItem>> GetIncidentsAsync()
@@ -73,7 +73,7 @@ public sealed class FireOpsService(
                     {
                         FirefighterId = m.FirefighterId,
                         Name = firefighters.TryGetValue(m.FirefighterId, out var f) ? f.DisplayName : "Unbekannt",
-                        FunctionLabel = m.Position == 1 ? "Truppführer" : "Truppmann",
+                        FunctionLabel = m.Position == 1 ? "TruppfÃ¼hrer" : "Truppmann",
                         InitialPressureBar = m.InitialPressureBar,
                         LatestPressureBar = latest?.PressureBar,
                         LatestPressureAt = latest?.RecordedAt,
@@ -149,7 +149,7 @@ public sealed class FireOpsService(
             {
                 FirefighterId = m.FirefighterId,
                 Name = firefighters[m.FirefighterId].DisplayName,
-                FunctionLabel = m.Position == 1 ? "Truppführer" : "Truppmann",
+                FunctionLabel = m.Position == 1 ? "TruppfÃ¼hrer" : "Truppmann",
                 InitialPressureBar = m.InitialPressureBar,
                 LatestPressureBar = latest?.PressureBar,
                 LatestPressureAt = latest?.RecordedAt,
@@ -264,13 +264,13 @@ public sealed class FireOpsService(
     public async Task<Guid> CreateTeamAsync(Guid incidentId, Guid unitId, string name, BreathingTeamRole role,
         Guid person1Id, Guid person2Id, int pressure1, int pressure2, string? mission, string? accessRoute)
     {
-        if (person1Id == person2Id) throw new InvalidOperationException("Ein Trupp benötigt zwei unterschiedliche Personen.");
+        if (person1Id == person2Id) throw new InvalidOperationException("Ein Trupp benÃ¶tigt zwei unterschiedliche Personen.");
         ValidatePressure(pressure1);
         ValidatePressure(pressure2);
 
         await using var db = await dbFactory.CreateDbContextAsync();
         var existingCount = await db.BreathingTeams.CountAsync(x => x.UnitId == unitId && x.Status != BreathingTeamStatus.Completed);
-        if (existingCount >= 3) throw new InvalidOperationException("Für dieses Fahrzeug sind bereits drei aktive/vorbereitete Trupps angelegt.");
+        if (existingCount >= 3) throw new InvalidOperationException("FÃ¼r dieses Fahrzeug sind bereits drei aktive/vorbereitete Trupps angelegt.");
 
         var station = await db.MonitoringStations.SingleAsync(x => x.IncidentId == incidentId && x.UnitId == unitId && x.Type == MonitoringStationType.Unit);
         var team = new BreathingTeam
@@ -309,9 +309,9 @@ public sealed class FireOpsService(
         int? safetyBagPressureBar = null)
     {
         if (string.IsNullOrWhiteSpace(teamLeaderName) || string.IsNullOrWhiteSpace(teamMemberName))
-            throw new InvalidOperationException("Bitte Truppführer und Truppmann eingeben.");
+            throw new InvalidOperationException("Bitte TruppfÃ¼hrer und Truppmann eingeben.");
         if (string.Equals(teamLeaderName.Trim(), teamMemberName.Trim(), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Truppführer und Truppmann müssen unterschiedliche Personen sein.");
+            throw new InvalidOperationException("TruppfÃ¼hrer und Truppmann mÃ¼ssen unterschiedliche Personen sein.");
 
         ValidatePressure(pressure1);
         ValidatePressure(pressure2);
@@ -321,7 +321,7 @@ public sealed class FireOpsService(
         var leader = await ResolveOrCreateFirefighterAsync(db, teamLeaderName);
         var member = await ResolveOrCreateFirefighterAsync(db, teamMemberName);
         if (leader.Id == member.Id)
-            throw new InvalidOperationException("Truppführer und Truppmann müssen unterschiedliche Personen sein.");
+            throw new InvalidOperationException("TruppfÃ¼hrer und Truppmann mÃ¼ssen unterschiedliche Personen sein.");
 
         var unit = await ResolveOrCreateUnitAsync(db, incidentId, vehicleCallSign);
         MonitoringStation station;
@@ -336,7 +336,7 @@ public sealed class FireOpsService(
                 ?? new MonitoringStation
                 {
                     Id = Guid.NewGuid(), IncidentId = incidentId, UnitId = unit.Id,
-                    Name = $"ASÜ {unit.CallSign}", Type = MonitoringStationType.Unit, IsActive = true
+                    Name = $"ASÃœ {unit.CallSign}", Type = MonitoringStationType.Unit, IsActive = true
                 };
             if (db.Entry(station).State == EntityState.Detached)
                 db.MonitoringStations.Add(station);
@@ -497,7 +497,7 @@ public sealed class FireOpsService(
         foreach (var member in members)
         {
             if (!values.TryGetValue(member.FirefighterId, out var targetPressure))
-                throw new InvalidOperationException("Für alle Truppmitglieder muss beim Erreichen des Einsatzziels ein Druckwert vorliegen.");
+                throw new InvalidOperationException("FÃ¼r alle Truppmitglieder muss beim Erreichen des Einsatzziels ein Druckwert vorliegen.");
             ValidatePressure(targetPressure);
             var initialPressure = member.InitialPressureBar ?? targetPressure;
             var outboundConsumption = Math.Max(0, initialPressure - targetPressure);
@@ -535,8 +535,8 @@ public sealed class FireOpsService(
         var team = await db.BreathingTeams.SingleAsync(x => x.Id == teamId);
         var now = DateTimeOffset.Now;
         team.ReturnStartedAt = now;
-        // Ein aktiver Atemnotfall bleibt bis zur Rückkehr als NOTFALL sichtbar.
-        // Der Rückzug wird zusätzlich zeitlich dokumentiert, ohne die rote Priorität zu verlieren.
+        // Ein aktiver Atemnotfall bleibt bis zur RÃ¼ckkehr als NOTFALL sichtbar.
+        // Der RÃ¼ckzug wird zusÃ¤tzlich zeitlich dokumentiert, ohne die rote PrioritÃ¤t zu verlieren.
         if (team.Status != BreathingTeamStatus.Emergency)
             team.Status = BreathingTeamStatus.Returning;
         team.Version++;
@@ -551,10 +551,10 @@ public sealed class FireOpsService(
         await using var db = await dbFactory.CreateDbContextAsync();
         var team = await db.BreathingTeams.SingleAsync(x => x.Id == teamId);
         if (team.Status is BreathingTeamStatus.Completed or BreathingTeamStatus.Returned)
-            throw new InvalidOperationException("Für einen bereits zurückgekehrten oder beendeten Trupp kann kein Atemnotfall ausgelöst werden.");
+            throw new InvalidOperationException("FÃ¼r einen bereits zurÃ¼ckgekehrten oder beendeten Trupp kann kein Atemnotfall ausgelÃ¶st werden.");
 
         var member = await db.BreathingTeamMembers.SingleOrDefaultAsync(x => x.TeamId == teamId && x.FirefighterId == firefighterId)
-            ?? throw new InvalidOperationException("Die ausgewählte Person gehört nicht zu diesem Trupp.");
+            ?? throw new InvalidOperationException("Die ausgewÃ¤hlte Person gehÃ¶rt nicht zu diesem Trupp.");
         var firefighter = await db.Firefighters.SingleAsync(x => x.Id == member.FirefighterId);
 
         var previousStatus = team.Status;
@@ -588,7 +588,7 @@ public sealed class FireOpsService(
         await using var db = await dbFactory.CreateDbContextAsync();
         var team = await db.BreathingTeams.SingleAsync(x => x.Id == teamId);
         if (team.Role != BreathingTeamRole.SafetyTeam)
-            throw new InvalidOperationException("Eine Notfalltasche wird in dieser Ansicht nur für Sicherheitstrupps geführt.");
+            throw new InvalidOperationException("Eine Notfalltasche wird in dieser Ansicht nur fÃ¼r Sicherheitstrupps gefÃ¼hrt.");
 
         AddEvent(db, team, "SafetyBagPressureRecorded", new
         {
@@ -725,7 +725,7 @@ public sealed class FireOpsService(
             }
             catch (JsonException)
             {
-                // Ältere MVP-Ereignisse ohne Berechnungsdaten werden ignoriert.
+                // Ã„ltere MVP-Ereignisse ohne Berechnungsdaten werden ignoriert.
             }
         }
         return null;
@@ -844,3 +844,4 @@ public sealed class FireOpsService(
             throw new ArgumentOutOfRangeException(nameof(pressure), "Der Flaschendruck muss zwischen 0 und 400 bar liegen.");
     }
 }
+

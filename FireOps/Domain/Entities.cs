@@ -1,4 +1,4 @@
-namespace FireOps.Mvp.Domain;
+﻿namespace FireOps.Domain;
 
 public sealed class Incident
 {
@@ -137,3 +137,4 @@ public sealed class IncidentEvent
     public string EventType { get; set; } = string.Empty;
     public string PayloadJson { get; set; } = "{}";
 }
+

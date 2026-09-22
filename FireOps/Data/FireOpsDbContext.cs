@@ -1,7 +1,7 @@
-using FireOps.Mvp.Domain;
+﻿using FireOps.Domain;
 using Microsoft.EntityFrameworkCore;
 
-namespace FireOps.Mvp.Data;
+namespace FireOps.Data;
 
 public sealed class FireOpsDbContext(DbContextOptions<FireOpsDbContext> options) : DbContext(options)
 {
@@ -41,3 +41,4 @@ public sealed class FireOpsDbContext(DbContextOptions<FireOpsDbContext> options)
         modelBuilder.Entity<MonitoringTransfer>().HasIndex(x => new { x.TeamId, x.Status });
     }
 }
+

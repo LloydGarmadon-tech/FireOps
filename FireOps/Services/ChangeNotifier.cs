@@ -1,4 +1,4 @@
-namespace FireOps.Mvp.Services;
+﻿namespace FireOps.Services;
 
 public sealed class ChangeNotifier
 {
@@ -6,3 +6,4 @@ public sealed class ChangeNotifier
 
     public void Notify(Guid incidentId) => IncidentChanged?.Invoke(incidentId);
 }
+

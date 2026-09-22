@@ -1,4 +1,4 @@
-namespace FireOps.Mvp.Domain;
+﻿namespace FireOps.Domain;
 
 public enum IncidentStatus
 {
@@ -71,3 +71,4 @@ public enum TransferStatus
     Rejected = 30,
     Cancelled = 40
 }
+

@@ -1,6 +1,6 @@
-using FireOps.Mvp.Components;
-using FireOps.Mvp.Data;
-using FireOps.Mvp.Services;
+﻿using FireOps.Components;
+using FireOps.Data;
+using FireOps.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -31,3 +31,4 @@ app.MapRazorComponents<App>()
 await DbInitializer.InitializeAsync(app.Services);
 
 app.Run();
+

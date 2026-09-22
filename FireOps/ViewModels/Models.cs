@@ -1,6 +1,6 @@
-using FireOps.Mvp.Domain;
+﻿using FireOps.Domain;
 
-namespace FireOps.Mvp.ViewModels;
+namespace FireOps.ViewModels;
 
 public sealed record IncidentListItem(Guid Id, string Keyword, string? Address, DateTimeOffset StartedAt, int UnitCount, int ActiveTeamCount);
 
@@ -87,8 +87,8 @@ public sealed class MemberPressureVm
             var pressureMargin = LatestPressureBar.Value - EffectiveTurnaroundPressureBar.Value;
             if (pressureMargin <= 0) return 0;
 
-            // Solange das Einsatzziel noch nicht erreicht ist, steigt der benötigte
-            // Rückwegdruck mit jedem zusätzlich verbrauchten bar um 2 bar.
+            // Solange das Einsatzziel noch nicht erreicht ist, steigt der benÃ¶tigte
+            // RÃ¼ckwegdruck mit jedem zusÃ¤tzlich verbrauchten bar um 2 bar.
             var divisor = TurnaroundPressureBar.HasValue ? ConsumptionRateBarPerMinute.Value : ConsumptionRateBarPerMinute.Value * 3d;
             return pressureMargin / divisor;
         }
@@ -112,3 +112,4 @@ public sealed class PendingTransferVm
     public required string FromStation { get; init; }
     public required string ToStation { get; init; }
 }
+
