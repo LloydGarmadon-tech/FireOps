@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet />
+</head>
+<body>
+    <Routes />
+    <script>
+        window.fireOpsAlert = {
+            play: function (level) {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    const ctx = new AudioContext();
+                    const count = level >= 2 ? 3 : 2;
+                    const frequency = level >= 2 ? 980 : 760;
+                    for (let i = 0; i < count; i++) {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'square';
+                        osc.frequency.value = frequency;
+                        gain.gain.setValueAtTime(0.0001, ctx.currentTime + i * 0.32);
+                        gain.gain.exponentialRampToValueAtTime(0.20, ctx.currentTime + i * 0.32 + 0.02);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.32 + 0.20);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start(ctx.currentTime + i * 0.32);
+                        osc.stop(ctx.currentTime + i * 0.32 + 0.22);
+                    }
+                    setTimeout(() => ctx.close(), count * 350 + 300);
+                } catch (_) { }
+            }
+        };
+    </script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>

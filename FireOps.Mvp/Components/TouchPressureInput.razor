@@ -1,0 +1,31 @@
+<div class="touch-pressure-control">
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <div class="touch-pressure-label">@Label</div>
+    }
+    <div class="touch-pressure-value"><strong>@Value</strong><span>bar</span></div>
+    <div class="touch-pressure-buttons">
+        <button type="button" class="pressure-step pressure-step-large" @onclick="() => Change(-10)">−10</button>
+        <button type="button" class="pressure-step" @onclick="() => Change(-5)">−5</button>
+        <button type="button" class="pressure-step" @onclick="() => Change(5)">+5</button>
+        <button type="button" class="pressure-step pressure-step-large" @onclick="() => Change(10)">+10</button>
+    </div>
+    <div class="touch-pressure-presets">
+        @foreach (var preset in Presets)
+        {
+            <button type="button" class="pressure-preset @(Value == preset ? "selected" : null)" @onclick="() => SetValue(preset)">@preset</button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public int Value { get; set; }
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+    [Parameter] public int Min { get; set; } = 0;
+    [Parameter] public int Max { get; set; } = 400;
+    [Parameter] public int[] Presets { get; set; } = [300, 250, 200, 150, 100, 50];
+
+    private Task Change(int delta) => SetValue(Math.Clamp(Value + delta, Min, Max));
+    private Task SetValue(int value) => ValueChanged.InvokeAsync(Math.Clamp(value, Min, Max));
+}

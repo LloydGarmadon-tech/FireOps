@@ -1,0 +1,49 @@
+@page "/"
+@rendermode InteractiveServer
+@inject FireOpsService Service
+
+<PageTitle>FireOps</PageTitle>
+
+<div class="page-header">
+    <div>
+        <span class="eyebrow">EINSATZÜBERSICHT</span>
+        <h1>Atemschutzüberwachung</h1>
+        <p class="muted">Funk/DMO bleibt der primäre Kommunikationsweg. Diese Anwendung unterstützt Überwachung, Visualisierung und Dokumentation.</p>
+    </div>
+</div>
+
+@if (_incidents is null)
+{
+    <div class="loading">Einsätze werden geladen …</div>
+}
+else if (_incidents.Count == 0)
+{
+    <div class="empty-state">Keine Einsätze vorhanden.</div>
+}
+else
+{
+    <div class="incident-grid">
+        @foreach (var incident in _incidents)
+        {
+            <a class="incident-card" href="/incident/@incident.Id">
+                <div class="incident-card-head">
+                    <span class="status-pill danger">AKTIV</span>
+                    <span class="muted">@incident.StartedAt.ToLocalTime().ToString("HH:mm")</span>
+                </div>
+                <h2>@incident.Keyword</h2>
+                <p>@incident.Address</p>
+                <div class="metric-row">
+                    <div><strong>@incident.UnitCount</strong><span>Fahrzeuge</span></div>
+                    <div><strong>@incident.ActiveTeamCount</strong><span>Trupps aktiv</span></div>
+                </div>
+            </a>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<IncidentListItem>? _incidents;
+
+    protected override async Task OnInitializedAsync()
+        => _incidents = await Service.GetIncidentsAsync();
+}

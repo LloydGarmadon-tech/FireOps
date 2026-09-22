@@ -1,0 +1,73 @@
+@page "/incident/{IncidentId:guid}/commander"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject FireOpsService Service
+@inject ChangeNotifier Notifier
+
+<PageTitle>Gruppenführer</PageTitle>
+
+@if (_model is null)
+{
+    <div class="loading">Lage wird geladen …</div>
+}
+else
+{
+    <div class="page-header action-header">
+        <div>
+            <a class="back-link" href="/incident/@IncidentId">← Atemschutzüberwachung</a>
+            <span class="eyebrow">GRUPPENFÜHRER / LAGEBILD</span>
+            <h1>@_model.Incident.Keyword</h1>
+            <p class="muted">Nur Lageübersicht – operative Kommunikation weiterhin über Funk/DMO.</p>
+        </div>
+    </div>
+
+    @foreach (var unit in _model.Units)
+    {
+        <section class="unit-panel">
+            <div class="unit-header"><div><span class="eyebrow">@unit.Unit.VehicleType</span><h2>@unit.Unit.CallSign</h2></div></div>
+            <div class="commander-grid">
+                @if (unit.Teams.Count == 0)
+                {
+                    <div class="empty-state small">Noch keine Atemschutztrupps angelegt.</div>
+                }
+                @foreach (var team in unit.Teams)
+                {
+                    <a class="commander-card @(team.Team.Status == BreathingTeamStatus.Emergency ? "is-emergency" : "")" href="/team/@team.Team.Id">
+                        <div class="team-card-top"><strong>@team.Team.Name</strong><span class="status-pill @StatusPill(team.Team.Status)">@StatusLabel(team.Team.Status)</span></div>
+                        @if (team.Team.Status == BreathingTeamStatus.Emergency)
+                        {
+                            <div class="dashboard-emergency">
+                                <strong>🚨 ATEMNOTFALL</strong>
+                                <span>@EmergencyTime(team)</span>
+                                @if (!string.IsNullOrWhiteSpace(team.EmergencyFirefighterName))
+                                {
+                                    <span>Betroffen: <strong>@team.EmergencyFirefighterName</strong></span>
+                                }
+                            </div>
+                        }
+                        <div class="commander-members">@string.Join(" / ", team.Members.Select(x => x.Name))</div>
+                        <div class="commander-pressure">@string.Join(" / ", team.Members.Select(x => (x.LatestPressureBar?.ToString() ?? "–") + " bar"))</div>
+                        @if (team.Team.Role == BreathingTeamRole.SafetyTeam)
+                        {
+                            <div class="safety-bag-inline">Notfalltasche: <strong>@(team.SafetyBagPressureBar?.ToString() ?? "–") bar</strong></div>
+                        }
+                        <div class="team-meta"><span>@(string.IsNullOrWhiteSpace(team.Team.Mission) ? "Kein Auftrag" : team.Team.Mission)</span><span>@Age(team.LastReadingAt)</span></div>
+                    </a>
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid IncidentId { get; set; }
+    private IncidentOverviewVm? _model;
+    protected override async Task OnInitializedAsync() { Notifier.IncidentChanged += OnIncidentChanged; await Reload(); }
+    private async Task Reload() { _model = await Service.GetIncidentOverviewAsync(IncidentId); await InvokeAsync(StateHasChanged); }
+    private void OnIncidentChanged(Guid id) { if (id == IncidentId) _ = Reload(); }
+    private static string Age(DateTimeOffset? value) => value is null ? "keine Druckmeldung" : $"Stand vor {Math.Max(0, (int)(DateTimeOffset.Now - value.Value).TotalMinutes)} Min.";
+    private static string EmergencyTime(TeamCardVm team) => team.EmergencyDeclaredAt is null ? "Zeitpunkt dokumentiert" : $"seit {team.EmergencyDeclaredAt.Value.ToLocalTime():HH:mm:ss}";
+    private static string StatusLabel(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Ready => "BEREIT", BreathingTeamStatus.Active => "EINSATZ", BreathingTeamStatus.TargetReached => "EINSATZZIEL", BreathingTeamStatus.Returning => "RÜCKZUG", BreathingTeamStatus.Returned => "ZURÜCK", BreathingTeamStatus.Completed => "BEENDET", BreathingTeamStatus.Emergency => "NOTFALL", _ => "VORBEREITUNG" };
+    private static string StatusPill(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Emergency => "danger", BreathingTeamStatus.Returning => "warning", BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached => "success", _ => "neutral" };
+    public void Dispose() => Notifier.IncidentChanged -= OnIncidentChanged;
+}

@@ -1,0 +1,86 @@
+@page "/incident/{IncidentId:guid}/central"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject FireOpsService Service
+@inject ChangeNotifier Notifier
+
+<PageTitle>Zentrale ASÜ</PageTitle>
+
+@if (_model is null)
+{
+    <div class="loading">Zentrale Atemschutzüberwachung wird geladen …</div>
+}
+else
+{
+    <div class="page-header action-header">
+        <div>
+            <a class="back-link" href="/incident/@IncidentId">← Einsatz</a>
+            <span class="eyebrow">ZENTRALE ATEMSCHUTZÜBERWACHUNG</span>
+            <h1>@_model.Incident.Keyword</h1>
+            <p class="muted">Trupps werden erst nach bestätigter Übernahme der zentralen ASÜ zugeordnet.</p>
+        </div>
+        <div class="header-actions"><span class="metric-chip">@AllTeams.Count() aktiv / bereit</span></div>
+    </div>
+
+    @if (_pending.Count > 0)
+    {
+        <section class="panel transfer-panel">
+            <span class="eyebrow">OFFENE ÜBERGABEN</span>
+            <h2>@_pending.Count Übernahme(n) warten auf Bestätigung</h2>
+            @foreach (var item in _pending)
+            {
+                <div class="transfer-row">
+                    <div><strong>@item.UnitCallSign · @item.TeamName</strong><small>@item.FromStation → @item.ToStation</small></div>
+                    <div class="row-actions"><button class="btn btn-secondary" @onclick="() => Reject(item.Transfer.Id)">Ablehnen</button><button class="btn btn-primary" @onclick="() => Accept(item.Transfer.Id)">Übernehmen</button></div>
+                </div>
+            }
+        </section>
+    }
+
+    <div class="central-list">
+        @foreach (var team in AllTeams.OrderByDescending(x => Priority(x.Team.Status)).ThenBy(x => x.UnitCallSign).ThenBy(x => x.Team.Name))
+        {
+            <a class="central-team-row @(team.Team.Status == BreathingTeamStatus.Emergency ? "is-emergency" : "")" href="/team/@team.Team.Id">
+                <div class="central-main">
+                    <span class="status-pill @StatusPill(team.Team.Status)">@StatusLabel(team.Team.Status)</span>
+                    <div>
+                        <strong>@team.UnitCallSign · @team.Team.Name</strong>
+                        <small>@string.Join(" / ", team.Members.Select(x => x.Name))</small>
+                        @if (team.Team.Status == BreathingTeamStatus.Emergency)
+                        {
+                            <span class="inline-emergency-time">🚨 @EmergencyTime(team)@(!string.IsNullOrWhiteSpace(team.EmergencyFirefighterName) ? $" · {team.EmergencyFirefighterName}" : "")</span>
+                        }
+                    </div>
+                </div>
+                <div class="central-mission"><strong>@(string.IsNullOrWhiteSpace(team.Team.Mission) ? "Kein Auftrag" : team.Team.Mission)</strong><small>@team.MonitoringStationName</small></div>
+                <div class="central-pressure">
+                    <strong>@string.Join(" / ", team.Members.Select(x => (x.LatestPressureBar?.ToString() ?? "–") + " bar"))</strong>
+                    <small>@Age(team.LastReadingAt)</small>
+                    @if (team.Team.Role == BreathingTeamRole.SafetyTeam)
+                    {
+                        <small>Notfalltasche: @(team.SafetyBagPressureBar?.ToString() ?? "–") bar</small>
+                    }
+                </div>
+            </a>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public Guid IncidentId { get; set; }
+    private IncidentOverviewVm? _model;
+    private IReadOnlyList<PendingTransferVm> _pending = Array.Empty<PendingTransferVm>();
+    private IEnumerable<TeamCardVm> AllTeams => _model?.Units.SelectMany(x => x.Teams) ?? Enumerable.Empty<TeamCardVm>();
+
+    protected override async Task OnInitializedAsync() { Notifier.IncidentChanged += OnIncidentChanged; await Reload(); }
+    private async Task Reload() { _model = await Service.GetIncidentOverviewAsync(IncidentId); _pending = await Service.GetPendingTransfersAsync(IncidentId); await InvokeAsync(StateHasChanged); }
+    private void OnIncidentChanged(Guid id) { if (id == IncidentId) _ = Reload(); }
+    private async Task Accept(Guid id) { await Service.AcceptTransferAsync(id); await Reload(); }
+    private async Task Reject(Guid id) { await Service.RejectTransferAsync(id); await Reload(); }
+    private static int Priority(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Emergency => 100, BreathingTeamStatus.Returning => 90, BreathingTeamStatus.Active => 80, BreathingTeamStatus.TargetReached => 75, BreathingTeamStatus.Ready => 40, _ => 10 };
+    private static string Age(DateTimeOffset? value) => value is null ? "keine Meldung" : $"vor {Math.Max(0, (int)(DateTimeOffset.Now - value.Value).TotalMinutes)} Min.";
+    private static string EmergencyTime(TeamCardVm team) => team.EmergencyDeclaredAt is null ? "Notfall" : $"Notfall seit {team.EmergencyDeclaredAt.Value.ToLocalTime():HH:mm:ss}";
+    private static string StatusLabel(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Ready => "BEREIT", BreathingTeamStatus.Active => "EINSATZ", BreathingTeamStatus.TargetReached => "EINSATZZIEL", BreathingTeamStatus.Returning => "RÜCKZUG", BreathingTeamStatus.Returned => "ZURÜCK", BreathingTeamStatus.Completed => "BEENDET", BreathingTeamStatus.Emergency => "NOTFALL", _ => "VORBEREITUNG" };
+    private static string StatusPill(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Emergency => "danger", BreathingTeamStatus.Returning => "warning", BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached => "success", _ => "neutral" };
+    public void Dispose() => Notifier.IncidentChanged -= OnIncidentChanged;
+}

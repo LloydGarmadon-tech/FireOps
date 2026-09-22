@@ -1,0 +1,427 @@
+@page "/incident/{IncidentId:guid}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject FireOpsService Service
+@inject ChangeNotifier Notifier
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Atemschutzüberwachung</PageTitle>
+
+@if (_model is null)
+{
+    <div class="loading">Atemschutzüberwachung wird geladen …</div>
+}
+else
+{
+    <div class="page-header action-header">
+        <div>
+            <a class="back-link" href="/">← Einsätze</a>
+            <span class="eyebrow">ATEMSCHUTZÜBERWACHUNG · @_model.Incident.ExternalId</span>
+            <h1>@_model.Incident.Keyword</h1>
+            <p class="muted">@_model.Incident.Address · Funk/DMO bleibt primärer Kommunikationsweg</p>
+        </div>
+        <div class="header-actions">
+            <a class="btn btn-secondary" href="/incident/@IncidentId/commander">Gruppenführer</a>
+            <a class="btn btn-secondary" href="/incident/@IncidentId/central">Übergaben</a>
+            <button class="btn btn-primary" @onclick="OpenCreate">+ Trupp</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+
+    <div class="asu-metrics">
+        <div class="asu-metric"><strong>@CountStatus(BreathingTeamStatus.Active, BreathingTeamStatus.TargetReached)</strong><span>im Einsatz</span></div>
+        <div class="asu-metric warning"><strong>@CountStatus(BreathingTeamStatus.Returning)</strong><span>Rückzug</span></div>
+        <div class="asu-metric danger"><strong>@TurnaroundDueCount()</strong><span>Umkehrdruck erreicht</span></div>
+        <div class="asu-metric"><strong>@CountStatus(BreathingTeamStatus.Ready)</strong><span>bereit</span></div>
+        <div class="asu-metric danger"><strong>@CountStatus(BreathingTeamStatus.Emergency)</strong><span>Notfall</span></div>
+        <div class="asu-metric"><strong>@AllTeams.Count(x => x.Team.Role == BreathingTeamRole.SafetyTeam && x.Team.Status != BreathingTeamStatus.Completed)</strong><span>Sicherheitstrupps</span></div>
+    </div>
+
+    <section class="panel asu-overview-panel">
+        <div class="asu-section-head">
+            <div>
+                <span class="eyebrow">ALLE TRUPPS</span>
+                <h2>Atemschutzüberwachung</h2>
+            </div>
+            <div class="asu-filter-note">Fahrzeug ist Zusatzinformation – der Trupp steht im Mittelpunkt.</div>
+        </div>
+
+        @if (!AllTeams.Any())
+        {
+            <button class="asu-empty" @onclick="OpenCreate">
+                <span class="plus">+</span>
+                <strong>Ersten Trupp anlegen</strong>
+                <small>Truppführer und Truppmann können direkt eingegeben werden.</small>
+            </button>
+        }
+        else
+        {
+            <div class="asu-team-grid">
+                @foreach (var team in OrderedTeams)
+                {
+                    <a class="asu-team-card @StatusClass(team.Team.Status) @PressureWarningClass(team)" href="/team/@team.Team.Id">
+                        <div class="asu-team-top">
+                            <div>
+                                <span class="team-role">@RoleLabel(team.Team.Role)</span>
+                                <h3>@team.Team.Name</h3>
+                            </div>
+                            <span class="status-pill @StatusPill(team.Team.Status)">@StatusLabel(team.Team.Status)</span>
+                        </div>
+
+                        @if (team.Team.Status == BreathingTeamStatus.Emergency)
+                        {
+                            <div class="card-emergency-warning">
+                                <strong>🚨 ATEMNOTFALL</strong>
+                                <span>@(team.EmergencyDeclaredAt is null ? "Zeitpunkt wird dokumentiert" : $"gemeldet um {team.EmergencyDeclaredAt.Value.ToLocalTime():HH:mm:ss}")@(!string.IsNullOrWhiteSpace(team.EmergencyFirefighterName) ? $" · {team.EmergencyFirefighterName}" : "")</span>
+                            </div>
+                        }
+
+                        @if (team.Members.Any(x => x.CriticalReserveReached))
+                        {
+                            <div class="card-pressure-warning critical"><strong>🚨 50-BAR-WARNSCHWELLE</strong><span>kritische Atemluftreserve</span></div>
+                        }
+                        else if (team.Members.Any(x => x.TurnaroundReached))
+                        {
+                            <div class="card-pressure-warning turnaround"><strong>⚠ RÜCKZUGSDRUCK ERREICHT</strong><span>schwächster Geräteträger bestimmt den Rückzug des gesamten Trupps</span></div>
+                        }
+                        else if (team.Members.Any(x => x.EarlyTurnaroundWarning))
+                        {
+                            <div class="card-pressure-warning forecast"><strong>⏱ UMKEHRDRUCK BALD ERREICHT</strong><span>Verbrauchsprognose – Druckmeldung anfordern</span></div>
+                        }
+
+                        <div class="asu-members">
+                            @foreach (var member in team.Members)
+                            {
+                                <div class="asu-member-row">
+                                    <div><small>@member.FunctionLabel</small><strong>@member.Name</strong></div>
+                                    <div class="asu-pressure @(member.CriticalReserveReached ? "critical" : member.TurnaroundReached ? "turnaround" : member.EarlyTurnaroundWarning ? "forecast" : "")">
+                                        @(member.LatestPressureBar?.ToString() ?? "–") <span>bar</span>
+                                        @if (member.EffectiveTurnaroundPressureBar is not null)
+                                        {
+                                            <small>@(member.TurnaroundPressureBar is null ? "vorl. Umkehr" : "Umkehr") @member.EffectiveTurnaroundPressureBar bar</small>
+                                        }
+                                        @if (member.MinutesToTurnaround is > 0)
+                                        {
+                                            <small>ca. @Math.Ceiling(member.MinutesToTurnaround.Value) Min.</small>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="asu-team-facts">
+                            <div><small>Einsatzzeit</small><strong>@Elapsed(team)</strong></div>
+                            <div><small>Letzte Meldung</small><strong>@Age(team.LastReadingAt)</strong></div>
+                        </div>
+
+                        <div class="asu-mission">
+                            <small>Auftrag</small>
+                            <strong>@(string.IsNullOrWhiteSpace(team.Team.Mission) ? "Noch kein Auftrag" : team.Team.Mission)</strong>
+                        </div>
+
+                        <div class="asu-card-footer">
+                            <span>🚒 @(team.UnitCallSign == "Ohne Fahrzeug" ? "ohne Fahrzeugzuordnung" : team.UnitCallSign)</span>
+                            <span>@team.MonitoringStationName</span>
+                        </div>
+                    </a>
+                }
+            </div>
+        }
+    </section>
+
+    @if (CompletedTeams.Any())
+    {
+        <section class="panel section-gap completed-panel">
+            <details>
+                <summary><strong>Beendete Trupps (@CompletedTeams.Count())</strong><span> – nachträgliche Dokumentation weiterhin möglich</span></summary>
+                <div class="completed-team-list">
+                    @foreach (var team in CompletedTeams)
+                    {
+                        <a class="completed-team-link" href="/team/@team.Team.Id">
+                            <div><strong>@team.Team.Name</strong><small>@string.Join(" / ", team.Members.Select(x => x.Name))</small></div>
+                            <div><span>@(team.UnitCallSign == "Ohne Fahrzeug" ? "ohne Fahrzeug" : team.UnitCallSign)</span><span>BEENDET</span></div>
+                        </a>
+                    }
+                </div>
+            </details>
+        </section>
+    }
+
+    @if (_createOpen)
+    {
+        <div class="modal-backdrop" @onclick="CloseCreate">
+            <div class="modal team-create-modal" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div>
+                        <span class="eyebrow">NEUER ATEMSCHUTZTRUPP</span>
+                        <h2>Schnellerfassung</h2>
+                    </div>
+                    <button class="icon-button" @onclick="CloseCreate">×</button>
+                </div>
+
+                <datalist id="firefighterNames">
+                    @foreach (var f in _agtSuggestions)
+                    {
+                        <option value="@f.DisplayName"></option>
+                    }
+                </datalist>
+                <datalist id="vehicleNames">
+                    @foreach (var vehicle in _vehicleSuggestions)
+                    {
+                        <option value="@vehicle"></option>
+                    }
+                </datalist>
+
+                <div class="form-grid team-create-grid">
+                    <label>Bezeichnung
+                        <input @bind="_newName" />
+                    </label>
+                    <label>Rolle
+                        <select @bind="_newRole">
+                            <option value="@BreathingTeamRole.AttackTeam">Angriffstrupp</option>
+                            <option value="@BreathingTeamRole.Regular">Trupp</option>
+                            <option value="@BreathingTeamRole.SafetyTeam">Sicherheitstrupp</option>
+                        </select>
+                    </label>
+
+                    <label>Truppführer
+                        <input list="firefighterNames" @bind="_leaderName" placeholder="AGT auswählen oder Namen frei eingeben" autocomplete="off" />
+                        <small class="field-hint">Vorschläge: verfügbare AGT der eigenen Wehr. Fremde Kräfte können frei eingetragen werden.</small>
+                    </label>
+                    <label>Truppmann
+                        <input list="firefighterNames" @bind="_memberName" placeholder="AGT auswählen oder Namen frei eingeben" autocomplete="off" />
+                        <small class="field-hint">Vorschläge: verfügbare AGT der eigenen Wehr. Fremde Kräfte können frei eingetragen werden.</small>
+                    </label>
+
+                    <TouchPressureInput Label="Startdruck Truppführer" @bind-Value="_pressure1" />
+                    <TouchPressureInput Label="Startdruck Truppmann" @bind-Value="_pressure2" />
+
+                    @if (_newRole == BreathingTeamRole.SafetyTeam)
+                    {
+                        <TouchPressureInput Label="Notfalltasche · Reserveflasche" @bind-Value="_safetyBagPressure" />
+                    }
+
+                    <label>Fahrzeug / Einheit <span class="optional">optional</span>
+                        <input list="vehicleNames" @bind="_vehicle" placeholder="Fahrzeug auswählen oder Funkrufnamen frei eingeben" autocomplete="off" />
+                        <small class="field-hint">Eigene Fahrzeuge werden vorgeschlagen; Fahrzeuge anderer Wehren können frei eingegeben werden.</small>
+                    </label>
+
+                    <label>Überwachung
+                        <select @bind="_useCentralMonitoring">
+                            <option value="true">Diese / zentrale Atemschutzüberwachung</option>
+                            <option value="false">Atemschutzüberwachung am Fahrzeug</option>
+                        </select>
+                    </label>
+
+                    <label>Auftrag <span class="optional">optional</span>
+                        <input @bind="_mission" placeholder="z. B. Menschenrettung 1. OG" />
+                    </label>
+                    <label>Angriffsweg <span class="optional">optional</span>
+                        <input @bind="_accessRoute" placeholder="z. B. Eingang Süd / Treppenraum" />
+                    </label>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="CloseCreate">Abbrechen</button>
+                    <button class="btn btn-primary" @onclick="CreateTeam">Trupp anlegen</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid IncidentId { get; set; }
+    private IncidentOverviewVm? _model;
+    private IReadOnlyList<Firefighter> _agtSuggestions = Array.Empty<Firefighter>();
+    private IReadOnlyList<string> _vehicleSuggestions = Array.Empty<string>();
+    private bool _createOpen;
+    private string _newName = "Trupp 1";
+    private BreathingTeamRole _newRole = BreathingTeamRole.AttackTeam;
+    private string _leaderName = string.Empty;
+    private string _memberName = string.Empty;
+    private int _pressure1 = 300;
+    private int _pressure2 = 300;
+    private int _safetyBagPressure = 300;
+    private string? _vehicle;
+    private bool _useCentralMonitoring = true;
+    private string? _mission;
+    private string? _accessRoute;
+    private string? _error;
+    private bool _warningStateInitialized;
+    private Dictionary<Guid, int> _warningLevels = new();
+
+    private IEnumerable<TeamCardVm> AllTeams => _model?.Units.SelectMany(x => x.Teams) ?? Enumerable.Empty<TeamCardVm>();
+    private IEnumerable<TeamCardVm> OrderedTeams => AllTeams
+        .Where(x => x.Team.Status != BreathingTeamStatus.Completed)
+        .OrderByDescending(x => Priority(x.Team.Status))
+        .ThenBy(x => x.Team.Name);
+    private IEnumerable<TeamCardVm> CompletedTeams => AllTeams
+        .Where(x => x.Team.Status == BreathingTeamStatus.Completed)
+        .OrderByDescending(x => x.Team.ReturnedAt ?? x.Team.LastModifiedAt);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.IncidentChanged += OnIncidentChanged;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _model = await Service.GetIncidentOverviewAsync(IncidentId);
+        if (_model is not null)
+        {
+            var current = _model.Units.SelectMany(x => x.Teams).ToDictionary(x => x.Team.Id, WarningLevel);
+            if (_warningStateInitialized)
+            {
+                var increased = current
+                    .Where(x => x.Value > 0 && (!_warningLevels.TryGetValue(x.Key, out var old) || x.Value > old))
+                    .Select(x => x.Value)
+                    .DefaultIfEmpty(0)
+                    .Max();
+                if (increased > 0)
+                    await PlayWarning(increased);
+            }
+            _warningLevels = current;
+            _warningStateInitialized = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnIncidentChanged(Guid incidentId)
+    {
+        if (incidentId == IncidentId)
+            _ = Reload();
+    }
+
+    private async Task OpenCreate()
+    {
+        _error = null;
+        _agtSuggestions = await Service.GetAvailableAgtFirefightersAsync(IncidentId);
+        _vehicleSuggestions = await Service.GetVehicleSuggestionsAsync();
+        _newName = $"Trupp {AllTeams.Count(x => x.Team.Status != BreathingTeamStatus.Completed) + 1}";
+        _newRole = BreathingTeamRole.AttackTeam;
+        _leaderName = string.Empty;
+        _memberName = string.Empty;
+        _pressure1 = 300;
+        _pressure2 = 300;
+        _safetyBagPressure = 300;
+        _vehicle = null;
+        _useCentralMonitoring = true;
+        _mission = null;
+        _accessRoute = null;
+        _createOpen = true;
+    }
+
+    private void CloseCreate() => _createOpen = false;
+
+    private async Task CreateTeam()
+    {
+        try
+        {
+            var teamId = await Service.CreateTeamQuickAsync(IncidentId, _newName, _newRole,
+                _leaderName, _memberName, _pressure1, _pressure2, _vehicle, _useCentralMonitoring,
+                _mission, _accessRoute, _newRole == BreathingTeamRole.SafetyTeam ? _safetyBagPressure : null);
+            _createOpen = false;
+            Nav.NavigateTo($"/team/{teamId}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private int TurnaroundDueCount() => AllTeams.Count(x =>
+        (x.Team.Status is BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached or BreathingTeamStatus.Emergency) &&
+        x.Members.Any(m => m.TurnaroundReached));
+
+    private static int WarningLevel(TeamCardVm team)
+    {
+        if (team.Members.Any(x => x.CriticalReserveReached)) return 3;
+        if (team.Members.Any(x => x.TurnaroundReached) && team.Team.Status is not BreathingTeamStatus.Returned and not BreathingTeamStatus.Completed) return 2;
+        if (team.Members.Any(x => x.EarlyTurnaroundWarning) && team.Team.Status is not BreathingTeamStatus.Returned and not BreathingTeamStatus.Completed) return 1;
+        return 0;
+    }
+
+    private static string PressureWarningClass(TeamCardVm team) => WarningLevel(team) switch
+    {
+        3 => "pressure-critical",
+        2 => "pressure-turnaround",
+        1 => "pressure-forecast",
+        _ => string.Empty
+    };
+
+    private async Task PlayWarning(int level)
+    {
+        try { await JS.InvokeVoidAsync("fireOpsAlert.play", level); }
+        catch { /* Visuelle Warnung bleibt auch bei blockiertem Browser-Audio aktiv. */ }
+    }
+
+    private int CountStatus(params BreathingTeamStatus[] statuses) => AllTeams.Count(x => statuses.Contains(x.Team.Status));
+    private static int Priority(BreathingTeamStatus status) => status switch
+    {
+        BreathingTeamStatus.Emergency => 100,
+        BreathingTeamStatus.Returning => 90,
+        BreathingTeamStatus.Active => 80,
+        BreathingTeamStatus.TargetReached => 75,
+        BreathingTeamStatus.Ready => 40,
+        _ => 10
+    };
+
+    private static string Elapsed(TeamCardVm team)
+    {
+        if (team.Team.AirSupplyStartedAt is null) return "–";
+        var end = team.Team.ReturnedAt ?? DateTimeOffset.Now;
+        var span = end - team.Team.AirSupplyStartedAt.Value;
+        return $"{(int)span.TotalMinutes:00}:{span.Seconds:00}";
+    }
+
+    private static string Age(DateTimeOffset? value)
+    {
+        if (value is null) return "keine";
+        var minutes = Math.Max(0, (int)(DateTimeOffset.Now - value.Value).TotalMinutes);
+        return minutes == 0 ? "gerade" : $"vor {minutes} Min.";
+    }
+
+    private static string RoleLabel(BreathingTeamRole role) => role switch
+    {
+        BreathingTeamRole.SafetyTeam => "SICHERHEITSTRUPP",
+        BreathingTeamRole.AttackTeam => "ANGRIFFSTRUPP",
+        _ => "TRUPP"
+    };
+
+    private static string StatusLabel(BreathingTeamStatus status) => status switch
+    {
+        BreathingTeamStatus.Ready => "BEREIT",
+        BreathingTeamStatus.Active => "EINSATZ",
+        BreathingTeamStatus.TargetReached => "EINSATZZIEL",
+        BreathingTeamStatus.Returning => "RÜCKZUG",
+        BreathingTeamStatus.Returned => "ZURÜCK",
+        BreathingTeamStatus.Completed => "BEENDET",
+        BreathingTeamStatus.Emergency => "NOTFALL",
+        _ => "VORBEREITUNG"
+    };
+
+    private static string StatusPill(BreathingTeamStatus status) => status switch
+    {
+        BreathingTeamStatus.Emergency => "danger",
+        BreathingTeamStatus.Returning => "warning",
+        BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached => "success",
+        _ => "neutral"
+    };
+
+    private static string StatusClass(BreathingTeamStatus status) => status switch
+    {
+        BreathingTeamStatus.Emergency => "is-emergency",
+        BreathingTeamStatus.Returning => "is-returning",
+        BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached => "is-active",
+        _ => ""
+    };
+
+    public void Dispose() => Notifier.IncidentChanged -= OnIncidentChanged;
+}

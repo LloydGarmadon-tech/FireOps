@@ -1,0 +1,640 @@
+@page "/team/{TeamId:guid}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject FireOpsService Service
+@inject ChangeNotifier Notifier
+@inject IJSRuntime JS
+
+<PageTitle>Trupp</PageTitle>
+
+@if (_model is null)
+{
+    <div class="loading">Trupp wird geladen …</div>
+}
+else
+{
+    <div class="page-header action-header">
+        <div>
+            <a class="back-link" href="/incident/@_model.Team.IncidentId">← Atemschutzüberwachung</a>
+            <span class="eyebrow">@RoleLabel(_model.Team.Role)</span>
+            <h1>@_model.Team.Name</h1>
+            <p class="muted">Überwachung: @_model.MonitoringStation.Name</p>
+        </div>
+        <div class="header-actions">
+            <span class="status-pill @StatusPill(_model.Team.Status)">@StatusLabel(_model.Team.Status)</span>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+
+    @if (_model.Team.Status == BreathingTeamStatus.Emergency)
+    {
+        <div class="emergency-state-alert">
+            <div>
+                <strong>🚨 ATEMNOTFALL – @_model.Team.Name</strong>
+                <span>@(_model.EmergencyDeclaredAt is null ? "Notfallzeitpunkt wird dokumentiert" : $"gemeldet um {_model.EmergencyDeclaredAt.Value.ToLocalTime():HH:mm:ss}")</span>
+                @if (!string.IsNullOrWhiteSpace(_model.EmergencyFirefighterName))
+                {
+                    <span><strong>Betroffene Einsatzkraft:</strong> @_model.EmergencyFirefighterName</span>
+                }
+            </div>
+            <small>Der Notfallstatus wird in allen Lagebildern hervorgehoben und bleibt zeitlich dokumentiert.</small>
+            @if (!string.IsNullOrWhiteSpace(_model.EmergencyNote))
+            {
+                <small><strong>Meldung:</strong> @_model.EmergencyNote</small>
+            }
+        </div>
+    }
+
+    @if (ShowTimeWarning(_model.Team, 2))
+    {
+        <div class="alert warning"><strong>2/3 der erwarteten Einsatzzeit erreicht.</strong> Druckkontrolle über Funk durchführen bzw. aktuellen Stand prüfen.</div>
+    }
+    else if (ShowTimeWarning(_model.Team, 1))
+    {
+        <div class="alert warning"><strong>1/3 der erwarteten Einsatzzeit erreicht.</strong> Druckkontrolle über Funk durchführen bzw. aktuellen Stand prüfen.</div>
+    }
+
+    @if (_model.Members.Any(x => x.CriticalReserveReached))
+    {
+        <div class="pressure-alert critical-pressure-alert">
+            <strong>🚨 50-BAR-WARNSCHWELLE ERREICHT</strong>
+            <span>@string.Join(", ", _model.Members.Where(x => x.CriticalReserveReached).Select(x => $"{x.FunctionLabel} {x.Name}: {x.LatestPressureBar} bar"))</span>
+            <small>Das Atemschutzgerät sollte seine mechanische Restdruckwarnung auslösen. Funk/DMO bleibt maßgeblich.</small>
+        </div>
+    }
+    else if (_model.Members.Any(x => x.TurnaroundReached))
+    {
+        <div class="pressure-alert turnaround-pressure-alert">
+            <strong>⚠ RÜCKZUGSDRUCK ERREICHT – TRUPP MUSS ZURÜCK</strong>
+            <span>@string.Join(", ", _model.Members.Where(x => x.TurnaroundReached).Select(x => $"{x.FunctionLabel} {x.Name}: {x.LatestPressureBar} / Umkehr {x.EffectiveTurnaroundPressureBar} bar"))</span>
+            <small>Der erste Geräteträger am individuellen Umkehrdruck bestimmt den Rückzug des gesamten Trupps. Rückzug über Funk veranlassen und anschließend dokumentieren.</small>
+        </div>
+    }
+    else if (_model.Members.Any(x => x.EarlyTurnaroundWarning))
+    {
+        <div class="pressure-alert forecast-pressure-alert">
+            <strong>⏱ VORWARNUNG: UMKEHRDRUCK BALD ERREICHT</strong>
+            <span>@string.Join(", ", _model.Members.Where(x => x.EarlyTurnaroundWarning).Select(x => $"{x.FunctionLabel} {x.Name}: ca. {Math.Ceiling(x.MinutesToTurnaround ?? 0)} Min. bei {x.ConsumptionRateBarPerMinute:F1} bar/min"))</span>
+            <small>Prognose aus bisherigem Zeit- und Luftverbrauch. Druck über Funk kontrollieren; maßgeblich bleibt der tatsächlich gemeldete Flaschendruck.</small>
+        </div>
+    }
+
+    <div class="detail-grid">
+        <section class="panel hero-panel">
+            <div class="timer-block">
+                <span>Einsatzdauer</span>
+                <strong>@Elapsed(_model.Team)</strong>
+            </div>
+            <div class="member-pressure-grid">
+                @foreach (var member in _model.Members)
+                {
+                    <div class="pressure-card">
+                        <span class="member-role-label">@member.FunctionLabel</span>
+                        <span>@member.Name</span>
+                        <strong>@(member.LatestPressureBar?.ToString() ?? "–") <small>bar</small></strong>
+                        <small>Start: @(member.InitialPressureBar?.ToString() ?? "–") bar</small>
+                        @if (member.EffectiveTurnaroundPressureBar is not null)
+                        {
+                            <div class="turnaround-data @(member.CriticalReserveReached ? "critical" : member.TurnaroundReached ? "reached" : member.EarlyTurnaroundWarning ? "forecast" : "")">
+                                @if (member.TurnaroundPressureBar is not null)
+                                {
+                                    <span>Einsatzziel: @member.TargetPressureBar bar</span>
+                                    <strong>Umkehrdruck: @member.TurnaroundPressureBar bar</strong>
+                                }
+                                else
+                                {
+                                    <span>Bisheriger Verbrauch: @member.OutboundConsumptionBar bar</span>
+                                    <strong>vorläufiger Umkehrdruck: @member.ProvisionalTurnaroundPressureBar bar</strong>
+                                }
+                                <span>Reserve: @member.ReservePressureBar bar</span>
+                                @if (member.ConsumptionRateBarPerMinute is not null)
+                                {
+                                    <span>Ø Verbrauch: @member.ConsumptionRateBarPerMinute.Value.ToString("F1") bar/min</span>
+                                }
+                                @if (member.MinutesToTurnaround is > 0)
+                                {
+                                    <span>Prognose bis Umkehr: ca. @Math.Ceiling(member.MinutesToTurnaround.Value) Min.</span>
+                                }
+                            </div>
+                        }
+                        @if (member.LatestPressureAt is not null)
+                        {
+                            <small>Stand: @member.LatestPressureAt.Value.ToLocalTime().ToString("HH:mm:ss")</small>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="action-grid">
+                @if (_model.Team.Status == BreathingTeamStatus.Ready)
+                {
+                    <button class="btn btn-success big" @onclick="StartTeam">Atemschutzeinsatz starten</button>
+                }
+                else
+                {
+                    <button class="btn btn-primary big" @onclick="OpenPressure">Druckmeldung</button>
+                }
+
+                @if (_model.Team.Status is BreathingTeamStatus.Active)
+                {
+                    <button class="btn btn-secondary big" @onclick="OpenTargetReached">Einsatzziel erreicht</button>
+                }
+
+                @if (_model.Team.Status is BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached or BreathingTeamStatus.Emergency)
+                {
+                    <button class="btn btn-warning big" @onclick="StartReturn">Rückzug</button>
+                }
+
+                @if (_model.Team.Status is BreathingTeamStatus.Returning or BreathingTeamStatus.Emergency)
+                {
+                    <button class="btn btn-success big" @onclick="MarkReturned">Trupp zurück</button>
+                }
+
+                @if (_model.Team.Status == BreathingTeamStatus.Returned)
+                {
+                    <button class="btn btn-secondary big" @onclick="Complete">Einsatz beenden</button>
+                }
+
+                @if (_model.Team.Status is not BreathingTeamStatus.Completed and not BreathingTeamStatus.Returned)
+                {
+                    <button class="btn btn-danger big" @onclick="OpenEmergency">ATEMNOTFALL melden</button>
+                }
+            </div>
+        </section>
+
+        <aside class="panel">
+            <span class="eyebrow">TAKTISCHE DATEN</span>
+            <dl class="facts">
+                <dt>Fahrzeug / Einheit</dt><dd>@TextOrDash(_model.Unit.CallSign == "Ohne Fahrzeug" ? null : _model.Unit.CallSign)</dd>
+                <dt>Auftrag</dt><dd>@TextOrDash(_model.Team.Mission)</dd>
+                <dt>Standort</dt><dd>@TextOrDash(_model.Team.Location)</dd>
+                <dt>Angriffsweg</dt><dd>@TextOrDash(_model.Team.AccessRoute)</dd>
+                <dt>Start Atemluft</dt><dd>@TimeOrDash(_model.Team.AirSupplyStartedAt)</dd>
+                <dt>1/3</dt><dd>@ThresholdTime(_model.Team, 1)</dd>
+                <dt>2/3</dt><dd>@ThresholdTime(_model.Team, 2)</dd>
+                <dt>Einsatzziel</dt><dd>@TimeOrDash(_model.Team.TargetReachedAt)</dd>
+                <dt>Rückzug</dt><dd>@TimeOrDash(_model.Team.ReturnStartedAt)</dd>
+                <dt>Notfall</dt><dd>@TimeOrDash(_model.EmergencyDeclaredAt)</dd>
+                <dt>Betroffene Person</dt><dd>@TextOrDash(_model.EmergencyFirefighterName)</dd>
+                <dt>Zurück</dt><dd>@TimeOrDash(_model.Team.ReturnedAt)</dd>
+            </dl>
+
+            <button class="btn btn-primary full" @onclick="OpenEdit">Einsatzdaten bearbeiten</button>
+
+            @if (_model.MonitoringStation.Type != MonitoringStationType.Central && _model.Team.Status != BreathingTeamStatus.Completed)
+            {
+                <button class="btn btn-secondary full section-gap-small" @onclick="RequestTransfer">An zentrale ASÜ übergeben</button>
+            }
+        </aside>
+    </div>
+
+    @if (_model.Team.Role == BreathingTeamRole.SafetyTeam)
+    {
+        <section class="panel section-gap safety-bag-panel">
+            <div class="section-title">
+                <div>
+                    <span class="eyebrow">NOTFALLTASCHE</span>
+                    <h2>Reserveflasche</h2>
+                    <p class="muted small">Der Flaschendruck wird getrennt vom Atemluftvorrat der Truppmitglieder dokumentiert.</p>
+                </div>
+                <button class="btn btn-primary" @onclick="OpenSafetyBagPressure">Druck dokumentieren</button>
+            </div>
+            <div class="safety-bag-current">
+                <div><span>Aktueller dokumentierter Druck</span><strong>@(_model.SafetyBagPressureBar?.ToString() ?? "–") <small>bar</small></strong></div>
+                <small>@(_model.SafetyBagPressureAt is null ? "Noch keine Meldung" : $"Stand: {_model.SafetyBagPressureAt.Value.ToLocalTime():HH:mm:ss}")</small>
+            </div>
+            @if (_model.SafetyBagPressureHistory.Count > 0)
+            {
+                <div class="table-wrap safety-bag-history">
+                    <table>
+                        <thead><tr><th>Zeit</th><th>Druck Reserveflasche</th><th>Bemerkung</th></tr></thead>
+                        <tbody>
+                        @foreach (var item in _model.SafetyBagPressureHistory.Take(10))
+                        {
+                            <tr><td>@item.RecordedAt.ToLocalTime().ToString("HH:mm:ss")</td><td><strong>@item.PressureBar bar</strong></td><td>@TextOrDash(item.Note)</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+
+    <section class="panel section-gap">
+        <div class="section-title">
+            <div>
+                <span class="eyebrow">DOKUMENTATION</span>
+                <h2>Druckverlauf</h2>
+            </div>
+        </div>
+        @if (_model.PressureHistory.Count == 0)
+        {
+            <p class="muted">Noch keine Druckwerte vorhanden.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Zeit</th><th>Einsatzkraft</th><th>Druck</th><th>Quelle</th></tr></thead>
+                    <tbody>
+                    @foreach (var item in _model.PressureHistory.Take(20))
+                    {
+                        <tr>
+                            <td>@item.RecordedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                            <td>@item.Name</td>
+                            <td><strong>@item.PressureBar bar</strong></td>
+                            <td>@SourceLabel(item.Source)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    @if (_editOpen)
+    {
+        <div class="modal-backdrop" @onclick="CloseEdit">
+            <div class="modal" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div>
+                        <span class="eyebrow">DOKUMENTATION</span>
+                        <h2>Einsatzdaten bearbeiten</h2>
+                        <p class="muted small">Die Angaben können auch nach Einsatzende ergänzt oder korrigiert werden.</p>
+                    </div>
+                    <button class="icon-button" @onclick="CloseEdit">×</button>
+                </div>
+
+                <datalist id="teamVehicleNames">
+                    @foreach (var vehicle in _vehicleSuggestions)
+                    {
+                        <option value="@vehicle"></option>
+                    }
+                </datalist>
+
+                <div class="form-grid">
+                    <label>Bezeichnung
+                        <input @bind="_editName" />
+                    </label>
+                    <label>Rolle
+                        <select @bind="_editRole">
+                            <option value="@BreathingTeamRole.AttackTeam">Angriffstrupp</option>
+                            <option value="@BreathingTeamRole.Regular">Trupp</option>
+                            <option value="@BreathingTeamRole.SafetyTeam">Sicherheitstrupp</option>
+                        </select>
+                    </label>
+                    <label class="span-2">Fahrzeug / Einheit <span class="optional">optional</span>
+                        <input list="teamVehicleNames" @bind="_editVehicle" placeholder="Fahrzeug auswählen oder frei eingeben" autocomplete="off" />
+                        <small class="field-hint">Auch Fahrzeuge anderer Wehren können nachträglich frei eingetragen werden.</small>
+                    </label>
+                    <label class="span-2">Auftrag <span class="optional">optional</span>
+                        <input @bind="_editMission" placeholder="z. B. Menschenrettung 1. OG" />
+                    </label>
+                    <label class="span-2">Standort / Einsatzziel <span class="optional">optional</span>
+                        <input @bind="_editLocation" placeholder="z. B. Wohnung 1. OG" />
+                    </label>
+                    <label class="span-2">Angriffsweg <span class="optional">optional</span>
+                        <input @bind="_editAccessRoute" placeholder="z. B. Eingang Süd / Treppenraum" />
+                    </label>
+                    <label>Erwartete Einsatzzeit (Min.)
+                        <input type="number" min="1" max="240" @bind="_editExpectedDuration" />
+                    </label>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="CloseEdit">Abbrechen</button>
+                    <button class="btn btn-primary" @onclick="SaveEdit">Änderungen speichern</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_targetOpen)
+    {
+        <div class="modal-backdrop" @onclick="CloseTargetReached">
+            <div class="modal compact" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div>
+                        <span class="eyebrow">EINSATZZIEL ERREICHT</span>
+                        <h2>Druck am Einsatzziel</h2>
+                        <p class="muted small">Aus dem Verbrauch auf dem Hinweg berechnet die App den individuellen Umkehrdruck. Reserve: 50 bar.</p>
+                    </div>
+                    <button class="icon-button" @onclick="CloseTargetReached">×</button>
+                </div>
+                <div class="pressure-inputs">
+                    @foreach (var member in _model.Members)
+                    {
+                        <div>
+                            <TouchPressureInput Label="@($"{member.FunctionLabel} · {member.Name}")"
+                                                Value="@_targetValues[member.FirefighterId]"
+                                                ValueChanged="value => _targetValues[member.FirefighterId] = value" />
+                            <div class="turnaround-preview">
+                                Start @member.InitialPressureBar bar · Hinwegverbrauch @OutboundConsumption(member) bar<br />
+                                <strong>berechneter Umkehrdruck: @CalculatedTurnaround(member) bar</strong>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="formula-note">Umkehrdruck = 2 × Hinwegverbrauch + 50 bar Reserve</div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="CloseTargetReached">Abbrechen</button>
+                    <button class="btn btn-primary" @onclick="SaveTargetReached">Einsatzziel bestätigen</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_emergencyOpen)
+    {
+        <div class="modal-backdrop" @onclick="CloseEmergency">
+            <div class="modal compact emergency-modal" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div>
+                        <span class="eyebrow">SOFORTMELDUNG</span>
+                        <h2>🚨 Atemnotfall melden</h2>
+                    </div>
+                    <button class="icon-button" @onclick="CloseEmergency">×</button>
+                </div>
+                <div class="emergency-confirmation">
+                    <strong>@_model.Team.Name wird sofort auf NOTFALL gesetzt.</strong>
+                    <p>Der Zeitpunkt wird beim Bestätigen automatisch sekundengenau gespeichert und in Atemschutzüberwachung, zentraler ASÜ und Gruppenführer-Lagebild signalisiert.</p>
+                    <div class="emergency-person-select">
+                        <span class="field-label">Wer ist vom Atemnotfall betroffen?</span>
+                        <div class="emergency-person-buttons">
+                            @foreach (var member in _model.Members)
+                            {
+                                <button type="button" class="emergency-person-button @(_emergencyFirefighterId == member.FirefighterId ? "selected" : "")" @onclick="() => _emergencyFirefighterId = member.FirefighterId">
+                                    <span>@member.FunctionLabel</span><strong>@member.Name</strong><small>@(member.LatestPressureBar?.ToString() ?? "–") bar</small>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <label>Bemerkung <span class="optional">optional</span>
+                        <input @bind="_emergencyNote" placeholder="z. B. Mayday über Funk, Geräteträger gestürzt" />
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="CloseEmergency">Abbrechen</button>
+                    <button class="btn btn-danger" @onclick="ConfirmEmergency">ATEMNOTFALL AUSLÖSEN</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_safetyBagOpen)
+    {
+        <div class="modal-backdrop" @onclick="CloseSafetyBagPressure">
+            <div class="modal compact" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div><span class="eyebrow">NOTFALLTASCHE</span><h2>Druck Reserveflasche</h2></div>
+                    <button class="icon-button" @onclick="CloseSafetyBagPressure">×</button>
+                </div>
+                <TouchPressureInput Label="Aktueller Flaschendruck" @bind-Value="_safetyBagPressureValue" />
+                <label class="section-gap-small">Bemerkung <span class="optional">optional</span>
+                    <input @bind="_safetyBagNote" placeholder="z. B. Kontrolle vor Bereitstellung / nach Nutzung" />
+                </label>
+                <p class="muted small">Die Meldung wird mit Zeitpunkt in der Einsatzdokumentation gespeichert.</p>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="CloseSafetyBagPressure">Abbrechen</button>
+                    <button class="btn btn-primary" @onclick="SaveSafetyBagPressure">Druck speichern</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_pressureOpen)
+    {
+        <div class="modal-backdrop" @onclick="ClosePressure">
+            <div class="modal compact" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <div><span class="eyebrow">FUNK / DRUCKMELDUNG</span><h2>Aktuelle Werte</h2></div>
+                    <button class="icon-button" @onclick="ClosePressure">×</button>
+                </div>
+                <div class="pressure-inputs">
+                    @foreach (var member in _model.Members)
+                    {
+                        <TouchPressureInput Label="@($"{member.FunctionLabel} · {member.Name}")"
+                                            Value="@_pressureValues[member.FirefighterId]"
+                                            ValueChanged="value => _pressureValues[member.FirefighterId] = value" />
+                    }
+                </div>
+                <p class="muted small">Quelle: Funk / DMO. Die App dokumentiert den gemeldeten Wert; Funk bleibt primärer Kommunikationsweg.</p>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" @onclick="ClosePressure">Abbrechen</button>
+                    <button class="btn btn-primary" @onclick="SavePressure">Speichern</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid TeamId { get; set; }
+    private TeamDetailsVm? _model;
+    private bool _pressureOpen;
+    private bool _targetOpen;
+    private bool _editOpen;
+    private bool _emergencyOpen;
+    private Guid? _emergencyFirefighterId;
+    private string? _emergencyNote;
+    private bool _safetyBagOpen;
+    private int _safetyBagPressureValue = 300;
+    private string? _safetyBagNote;
+    private IReadOnlyList<string> _vehicleSuggestions = Array.Empty<string>();
+    private string _editName = string.Empty;
+    private BreathingTeamRole _editRole;
+    private string? _editVehicle;
+    private string? _editMission;
+    private string? _editLocation;
+    private string? _editAccessRoute;
+    private int _editExpectedDuration = 30;
+    private Dictionary<Guid, int> _pressureValues = new();
+    private Dictionary<Guid, int> _targetValues = new();
+    private string? _error;
+    private bool _warningStateInitialized;
+    private int _lastWarningLevel;
+    private System.Threading.Timer? _clock;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.IncidentChanged += OnIncidentChanged;
+        _clock = new System.Threading.Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _model = await Service.GetTeamDetailsAsync(TeamId);
+        var level = WarningLevel(_model);
+        if (_warningStateInitialized && level > _lastWarningLevel)
+            await PlayWarning(level);
+        _lastWarningLevel = level;
+        _warningStateInitialized = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnIncidentChanged(Guid incidentId)
+    {
+        if (_model?.Team.IncidentId == incidentId)
+            _ = Reload();
+    }
+
+    private async Task Run(Func<Task> action)
+    {
+        try { _error = null; await action(); await Reload(); }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private Task StartTeam() => Run(() => Service.StartTeamAsync(TeamId));
+    private Task StartReturn() => Run(() => Service.StartReturnAsync(TeamId));
+    private Task MarkReturned() => Run(() => Service.MarkReturnedAsync(TeamId));
+    private Task Complete() => Run(() => Service.CompleteTeamAsync(TeamId));
+    private void OpenEmergency()
+    {
+        _emergencyNote = null;
+        _emergencyFirefighterId = _model?.Members.FirstOrDefault()?.FirefighterId;
+        _emergencyOpen = true;
+    }
+
+    private void CloseEmergency() => _emergencyOpen = false;
+
+    private async Task ConfirmEmergency()
+    {
+        if (_emergencyFirefighterId is null)
+        {
+            _error = "Bitte die vom Atemnotfall betroffene Einsatzkraft auswählen.";
+            return;
+        }
+        await Run(() => Service.DeclareEmergencyAsync(TeamId, _emergencyFirefighterId.Value, _emergencyNote));
+        _emergencyOpen = false;
+    }
+    private void OpenSafetyBagPressure()
+    {
+        _safetyBagPressureValue = _model?.SafetyBagPressureBar ?? 300;
+        _safetyBagNote = null;
+        _safetyBagOpen = true;
+    }
+
+    private void CloseSafetyBagPressure() => _safetyBagOpen = false;
+
+    private async Task SaveSafetyBagPressure()
+    {
+        await Run(() => Service.RecordSafetyBagPressureAsync(TeamId, _safetyBagPressureValue, _safetyBagNote));
+        _safetyBagOpen = false;
+    }
+
+    private Task RequestTransfer() => Run(() => Service.RequestCentralTransferAsync(TeamId));
+
+    private void OpenTargetReached()
+    {
+        if (_model is null) return;
+        _targetValues = _model.Members.ToDictionary(x => x.FirefighterId, x => x.LatestPressureBar ?? x.InitialPressureBar ?? 300);
+        _targetOpen = true;
+    }
+
+    private void CloseTargetReached() => _targetOpen = false;
+
+    private async Task SaveTargetReached()
+    {
+        await Run(() => Service.MarkTargetReachedAsync(TeamId, _targetValues, 50));
+        _targetOpen = false;
+    }
+
+    private int OutboundConsumption(MemberPressureVm member)
+    {
+        var initial = member.InitialPressureBar ?? 0;
+        var target = _targetValues.TryGetValue(member.FirefighterId, out var value) ? value : member.LatestPressureBar ?? initial;
+        return Math.Max(0, initial - target);
+    }
+
+    private int CalculatedTurnaround(MemberPressureVm member) => Math.Min(400, OutboundConsumption(member) * 2 + 50);
+
+    private async Task OpenEdit()
+    {
+        if (_model is null) return;
+        _vehicleSuggestions = await Service.GetVehicleSuggestionsAsync();
+        _editName = _model.Team.Name;
+        _editRole = _model.Team.Role;
+        _editVehicle = _model.Unit.CallSign == "Ohne Fahrzeug" ? null : _model.Unit.CallSign;
+        _editMission = _model.Team.Mission;
+        _editLocation = _model.Team.Location;
+        _editAccessRoute = _model.Team.AccessRoute;
+        _editExpectedDuration = _model.Team.ExpectedDurationMinutes;
+        _editOpen = true;
+    }
+
+    private void CloseEdit() => _editOpen = false;
+
+    private async Task SaveEdit()
+    {
+        await Run(() => Service.UpdateTeamDetailsAsync(
+            TeamId, _editName, _editRole, _editVehicle, _editMission, _editLocation,
+            _editAccessRoute, _editExpectedDuration));
+        _editOpen = false;
+    }
+
+    private void OpenPressure()
+    {
+        if (_model is null) return;
+        _pressureValues = _model.Members.ToDictionary(x => x.FirefighterId, x => x.LatestPressureBar ?? x.InitialPressureBar ?? 300);
+        _pressureOpen = true;
+    }
+
+    private void ClosePressure() => _pressureOpen = false;
+
+    private async Task SavePressure()
+    {
+        await Run(() => Service.RecordPressureAsync(TeamId, _pressureValues, InformationSource.Radio));
+        _pressureOpen = false;
+    }
+
+    private static int WarningLevel(TeamDetailsVm? model)
+    {
+        if (model is null) return 0;
+        if (model.Members.Any(x => x.CriticalReserveReached)) return 3;
+        if (model.Members.Any(x => x.TurnaroundReached)) return 2;
+        if (model.Members.Any(x => x.EarlyTurnaroundWarning)) return 1;
+        return 0;
+    }
+
+    private async Task PlayWarning(int level)
+    {
+        if (level <= 0) return;
+        try { await JS.InvokeVoidAsync("fireOpsAlert.play", level); }
+        catch { /* Akustik ist Zusatzfunktion; die visuelle Warnung bleibt maßgeblich. */ }
+    }
+
+    private static string Elapsed(BreathingTeam team)
+    {
+        if (team.AirSupplyStartedAt is null) return "00:00:00";
+        var end = team.ReturnedAt ?? DateTimeOffset.Now;
+        var span = end - team.AirSupplyStartedAt.Value;
+        return $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+    }
+
+    private static bool ShowTimeWarning(BreathingTeam team, int third)
+    {
+        if (team.AirSupplyStartedAt is null || team.Status is BreathingTeamStatus.Returned or BreathingTeamStatus.Completed) return false;
+        var due = team.AirSupplyStartedAt.Value.AddMinutes(team.ExpectedDurationMinutes * third / 3d);
+        return DateTimeOffset.Now >= due;
+    }
+
+    private static string ThresholdTime(BreathingTeam team, int third)
+        => team.AirSupplyStartedAt?.AddMinutes(team.ExpectedDurationMinutes * third / 3d).ToLocalTime().ToString("HH:mm") ?? "–";
+    private static string TimeOrDash(DateTimeOffset? value) => value?.ToLocalTime().ToString("HH:mm:ss") ?? "–";
+    private static string TextOrDash(string? value) => string.IsNullOrWhiteSpace(value) ? "–" : value;
+    private static string RoleLabel(BreathingTeamRole role) => role == BreathingTeamRole.SafetyTeam ? "SICHERHEITSTRUPP" : role == BreathingTeamRole.AttackTeam ? "ANGRIFFSTRUPP" : "TRUPP";
+    private static string StatusLabel(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Ready => "BEREIT", BreathingTeamStatus.Active => "EINSATZ", BreathingTeamStatus.TargetReached => "EINSATZZIEL", BreathingTeamStatus.Returning => "RÜCKZUG", BreathingTeamStatus.Returned => "ZURÜCK", BreathingTeamStatus.Completed => "BEENDET", BreathingTeamStatus.Emergency => "NOTFALL", _ => "VORBEREITUNG" };
+    private static string StatusPill(BreathingTeamStatus status) => status switch { BreathingTeamStatus.Emergency => "danger", BreathingTeamStatus.Returning => "warning", BreathingTeamStatus.Active or BreathingTeamStatus.TargetReached => "success", _ => "neutral" };
+    private static string SourceLabel(InformationSource source) => source switch { InformationSource.Radio => "Funk", InformationSource.DirectObservation => "Ablesung", InformationSource.Automatic => "Automatisch", InformationSource.Imported => "Import", _ => "Manuell" };
+
+    public void Dispose()
+    {
+        Notifier.IncidentChanged -= OnIncidentChanged;
+        _clock?.Dispose();
+    }
+}
