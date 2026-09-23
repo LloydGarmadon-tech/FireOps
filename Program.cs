@@ -1,4 +1,4 @@
-﻿using FireOps.Components;
+using FireOps.Components;
 using FireOps.Data;
 using FireOps.Services;
 using Microsoft.EntityFrameworkCore;
@@ -9,8 +9,16 @@ builder.Services
     .AddRazorComponents()
     .AddInteractiveServerComponents();
 
+var dataDirectory = Path.Combine(builder.Environment.ContentRootPath, "data");
+Directory.CreateDirectory(dataDirectory);
+
+var configuredConnectionString = builder.Configuration.GetConnectionString("FireOps");
+var connectionString = string.IsNullOrWhiteSpace(configuredConnectionString)
+    ? $"Data Source={Path.Combine(dataDirectory, "fireops.db")}" 
+    : configuredConnectionString.Replace("{DataDirectory}", dataDirectory, StringComparison.OrdinalIgnoreCase);
+
 builder.Services.AddDbContextFactory<FireOpsDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("FireOps") ?? "Data Source=fireops.db"));
+    options.UseSqlite(connectionString));
 
 builder.Services.AddSingleton<ChangeNotifier>();
 builder.Services.AddScoped<FireOpsService>();
@@ -31,4 +39,3 @@ app.MapRazorComponents<App>()
 await DbInitializer.InitializeAsync(app.Services);
 
 app.Run();
-
